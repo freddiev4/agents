@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mini-codex"
+version = "0.1.0"
+description = "A minimal coding agent inspired by OpenAI's Codex"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = [
+    "openai>=1.0.0",
+]
+
+[project.scripts]
+mini-codex = "mini_codex.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
