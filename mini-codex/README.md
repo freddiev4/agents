@@ -2,54 +2,25 @@
 
 A coding agent harness inspired by [OpenCode](https://github.com/anomalyco/opencode), demonstrating production-grade harness patterns in ~1000 lines of Python.
 
-## What's in the Harness
+## Project Overview
 
-| Feature | Module | Description |
-|---------|--------|-------------|
-| **15 Built-in Tools** | `tools.py` | shell, read_file, write_file, edit_file, multi_edit, apply_patch, list_files, glob, grep, tree, web_fetch, web_search, task, todo, notebook_edit |
-| **MCP Support** | `mcp_client.py` | Load external tool servers via the Model Context Protocol |
-| **Permissions** | `permissions.py` | Per-agent tool access control (allow / ask / deny) |
-| **Agent Definitions** | `agents.py` | Declarative `build` (full access) and `plan` (read-only) agents |
-| **Subagent Spawning** | `agent.py` | The `task` tool spawns a child agent with its own session |
-| **Session Management** | `session.py` | Forking, compaction, token usage tracking, save/load |
-| **Agent Loop** | `agent.py` | Core loop with permission checks, MCP routing, auto-compaction |
+Mini Codex is a versatile coding agent framework that provides a set of built-in tools and supports external tool servers via the Model Context Protocol (MCP). It features permission management, subagent spawning, and supports both build (full access) and plan (read-only) agent modes.
 
-## Architecture
+## Installation Instructions
 
-```
-User Input
-  │
-  ▼
-Agent.run()  ─── loads AgentDefinition (build / plan / subagent)
-  │
-  ├─► _get_permitted_tools()  ── filters by PermissionSet
-  ├─► _build_system_prompt()  ── includes MCP tool list
-  │
-  ▼
-_call_model()  ── OpenAI API with permitted tools
-  │
-  ├─► tool_calls?
-  │     ├─► permission check (allow / ask / deny)
-  │     ├─► MCP tool? → MCPManager.call_tool()
-  │     ├─► built-in? → ToolExecutor.execute()
-  │     │     └─► "task" tool? → _spawn_subagent()
-  │     │           └─► fork session → new Agent(subagent) → run_sync()
-  │     └─► add results to session → loop
-  │
-  ├─► needs_compaction? → summarize + compact session
-  │
-  └─► final response → return
-```
-
-## Installation
+To set up the project locally, ensure you have Python 3.10 or higher, and then run:
 
 ```bash
 pip install -e .
 ```
 
+This will install the necessary dependencies as specified in the `requirements.txt` and `pyproject.toml` files.
+
 ## Usage
 
 ### Interactive Mode
+
+Run the following commands to start the agent in different modes:
 
 ```bash
 # Build agent (full access - default)
@@ -63,6 +34,8 @@ mini-codex --mcp-config mcp.json
 ```
 
 ### Single Prompt
+
+Execute a single command non-interactively:
 
 ```bash
 mini-codex -p "find all TODO comments in this project"
@@ -90,92 +63,19 @@ mini-codex -p "find all TODO comments in this project"
 --no-auto-approve   Require confirmation for tool execution
 ```
 
-## MCP Configuration
+## Code Structure
 
-Create an `mcp.json` file:
+- `mini_codex/agent.py`: Core agent loop with permission checks and MCP routing.
+- `mini_codex/agents.py`: Definitions for build and plan agents.
+- `mini_codex/tools.py`: Implementation of 15 built-in tools.
+- `mini_codex/mcp_client.py`: MCP support for external tool servers.
+- `mini_codex/permissions.py`: Tool access control.
+- `mini_codex/session.py`: Session management and compaction.
 
-```json
-{
-  "servers": {
-    "my-tools": {
-      "command": "npx",
-      "args": ["-y", "@example/mcp-server"],
-      "env": {"API_KEY": "..."}
-    }
-  }
-}
-```
+## Contribution Guidelines
 
-Tools from MCP servers are automatically discovered and added to the agent's available tools.
+Contributions are welcome! Please fork the repository and submit a pull request. Ensure your code adheres to the existing style and includes tests where applicable.
 
-## Tools
+## License
 
-| # | Tool | Description |
-|---|------|-------------|
-| 1 | `shell` | Execute shell commands |
-| 2 | `read_file` | Read files (with line range support) |
-| 3 | `write_file` | Write/create files |
-| 4 | `edit_file` | Search-and-replace editing |
-| 5 | `multi_edit` | Multiple edits in one call |
-| 6 | `apply_patch` | Apply unified diff patches |
-| 7 | `list_files` | List directory contents |
-| 8 | `glob` | Pattern-based file search |
-| 9 | `grep` | Regex content search |
-| 10 | `tree` | Recursive directory tree |
-| 11 | `web_fetch` | Fetch URL content |
-| 12 | `web_search` | Web search (needs API key) |
-| 13 | `task` | Spawn a subagent |
-| 14 | `todo` | Structured task list |
-| 15 | `notebook_edit` | Edit Jupyter notebook cells |
-
-## Agents
-
-### Build Agent
-Full read/write/execute access. Can spawn subagents. Shell commands require approval when `--no-auto-approve` is set.
-
-### Plan Agent
-Read-only. Can explore the codebase (read, list, glob, grep, tree) and search the web, but cannot modify files, run commands, or spawn subagents.
-
-### Subagent
-Spawned by the build agent via the `task` tool. Same permissions as build but cannot spawn further subagents (prevents infinite recursion).
-
-## Programmatic Usage
-
-```python
-from mini_codex import Agent, AgentConfig
-
-# Build agent with MCP
-agent = Agent(
-    working_dir="/path/to/project",
-    config=AgentConfig(
-        model="gpt-4o",
-        agent_name="build",
-        mcp_config_path="mcp.json",
-    ),
-)
-
-# Run synchronously
-response = agent.run_sync("What files are in this project?")
-print(response)
-
-# Switch to plan mode
-agent.switch_agent("plan")
-
-# Stream turns
-for turn in agent.run("Analyze the architecture"):
-    if turn.tool_calls:
-        print(f"[{turn.agent_name}] Using {len(turn.tool_calls)} tools...")
-    if turn.finished:
-        print(turn.response)
-
-# Clean up
-agent.shutdown()
-```
-
-## Environment Variables
-
-- `OPENAI_API_KEY`: Your OpenAI API key (required)
-
-## Credits
-
-Inspired by [OpenCode](https://github.com/anomalyco/opencode) and [OpenAI Codex](https://github.com/openai/codex).
+This project is licensed under the MIT License.
