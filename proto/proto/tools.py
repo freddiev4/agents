@@ -668,7 +668,7 @@ class ToolExecutor:
             return ToolResult(success=False, output="", error="No URL provided")
 
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "mini-codex/0.2"})
+            req = urllib.request.Request(url, headers={"User-Agent": "proto/0.2"})
             with urllib.request.urlopen(req, timeout=15) as resp:
                 body = resp.read().decode("utf-8", errors="replace")
             # Truncate very large responses
@@ -715,7 +715,7 @@ class ToolExecutor:
                 headers={
                     "Content-Type": "application/json",
                     "Accept": "application/json",
-                    "User-Agent": "mini-codex/0.2",
+                    "User-Agent": "proto/0.2",
                 },
                 method="POST",
             )

@@ -1,10 +1,10 @@
-# Mini Codex
+# Proto
 
 A coding agent harness inspired by [OpenCode](https://github.com/anomalyco/opencode), demonstrating production-grade harness patterns in ~1000 lines of Python.
 
 ## Project Overview
 
-Mini Codex is a versatile coding agent framework that provides a set of built-in tools and supports external tool servers via the Model Context Protocol (MCP). It features permission management, subagent spawning, and supports both build (full access) and plan (read-only) agent modes.
+Proto is a versatile coding agent framework that provides a set of built-in tools and supports external tool servers via the Model Context Protocol (MCP). It features permission management, subagent spawning, and supports both build (full access) and plan (read-only) agent modes.
 
 ## Installation Instructions
 
@@ -24,13 +24,13 @@ Run the following commands to start the agent in different modes:
 
 ```bash
 # Build agent (full access - default)
-mini-codex
+proto
 
 # Plan agent (read-only)
-mini-codex --agent plan
+proto --agent plan
 
 # With MCP tool servers
-mini-codex --mcp-config mcp.json
+proto --mcp-config mcp.json
 ```
 
 ### Single Prompt
@@ -38,7 +38,7 @@ mini-codex --mcp-config mcp.json
 Execute a single command non-interactively:
 
 ```bash
-mini-codex -p "find all TODO comments in this project"
+proto -p "find all TODO comments in this project"
 ```
 
 ### REPL Commands
@@ -65,12 +65,12 @@ mini-codex -p "find all TODO comments in this project"
 
 ## Code Structure
 
-- `mini_codex/agent.py`: Core agent loop with permission checks and MCP routing.
-- `mini_codex/agents.py`: Definitions for build and plan agents.
-- `mini_codex/tools.py`: Implementation of 15 built-in tools.
-- `mini_codex/mcp_client.py`: MCP support for external tool servers.
-- `mini_codex/permissions.py`: Tool access control.
-- `mini_codex/session.py`: Session management and compaction.
+- `proto/agent.py`: Core agent loop with permission checks and MCP routing.
+- `proto/agents.py`: Definitions for build and plan agents.
+- `proto/tools.py`: Implementation of 15 built-in tools.
+- `proto/mcp_client.py`: MCP support for external tool servers.
+- `proto/permissions.py`: Tool access control.
+- `proto/session.py`: Session management and compaction.
 
 ## Contribution Guidelines
 

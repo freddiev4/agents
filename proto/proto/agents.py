@@ -16,13 +16,13 @@ Built-in agents:
 from dataclasses import dataclass, field
 from typing import Any
 
-from mini_codex.permissions import (
+from proto.permissions import (
     PermissionSet,
     build_permissions,
     plan_permissions,
     subagent_permissions,
 )
-from mini_codex.tools import TOOL_DEFINITIONS
+from proto.tools import TOOL_DEFINITIONS
 
 
 @dataclass

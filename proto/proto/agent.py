@@ -13,11 +13,11 @@ from typing import Any, Callable, Generator
 
 from openai import OpenAI
 
-from mini_codex.agents import AgentDefinition, get_agent_definition, AGENT_REGISTRY
-from mini_codex.mcp_client import MCPManager
-from mini_codex.permissions import PermissionLevel
-from mini_codex.session import Session
-from mini_codex.tools import TOOL_DEFINITIONS, ToolExecutor, ToolResult, TodoList
+from proto.agents import AgentDefinition, get_agent_definition, AGENT_REGISTRY
+from proto.mcp_client import MCPManager
+from proto.permissions import PermissionLevel
+from proto.session import Session
+from proto.tools import TOOL_DEFINITIONS, ToolExecutor, ToolResult, TodoList
 
 
 @dataclass

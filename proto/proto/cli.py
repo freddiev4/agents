@@ -1,11 +1,11 @@
-"""Command-line interface for Mini Codex."""
+"""Command-line interface for Proto."""
 
 import argparse
 import os
 import sys
 
-from mini_codex.agent import Agent, AgentConfig
-from mini_codex.agents import list_agents
+from proto.agent import Agent, AgentConfig
+from proto.agents import list_agents
 
 
 def print_colored(text: str, color: str) -> None:
@@ -49,7 +49,7 @@ def print_tool_result(result, name: str) -> None:
 
 def run_interactive(agent: Agent) -> None:
     """Run the agent in interactive REPL mode."""
-    print_colored("Mini Codex v0.2 - Interactive Mode", "bold")
+    print_colored("Proto v0.2 - Interactive Mode", "bold")
     print_colored(f"Agent: {agent.agent_def.name} | Model: {agent.config.model}", "dim")
     print_colored(f"Working directory: {agent.working_dir}", "dim")
     print_colored("Commands: exit, reset, history, switch <agent>, agents, status\n", "dim")
@@ -138,15 +138,15 @@ def run_single(agent: Agent, prompt: str) -> None:
 def main() -> None:
     """Main entry point for the CLI."""
     parser = argparse.ArgumentParser(
-        description="Mini Codex - A coding agent with harness features inspired by OpenCode",
+        description="Proto - A coding agent with harness features inspired by OpenCode",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
 Examples:
-  mini-codex                              # Interactive build agent
-  mini-codex --agent plan                 # Interactive plan (read-only) agent
-  mini-codex -p "list all files"          # Single prompt mode
-  mini-codex --mcp-config mcp.json        # Load MCP tool servers
-  mini-codex --model gpt-4o-mini          # Use a different model
+  proto                              # Interactive build agent
+  proto --agent plan                 # Interactive plan (read-only) agent
+  proto -p "list all files"          # Single prompt mode
+  proto --mcp-config mcp.json        # Load MCP tool servers
+  proto --model gpt-4o-mini          # Use a different model
 """,
     )
 

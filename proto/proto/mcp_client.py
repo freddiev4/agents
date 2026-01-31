@@ -32,7 +32,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from mini_codex.tools import ToolResult
+from proto.tools import ToolResult
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +129,7 @@ class MCPServer:
         """Send the MCP initialize handshake."""
         resp = self._send("initialize", {
             "protocolVersion": "2024-11-05",
-            "clientInfo": {"name": "mini-codex", "version": "0.2.0"},
+            "clientInfo": {"name": "proto", "version": "0.2.0"},
             "capabilities": {},
         })
         # Send initialized notification (no response expected)
