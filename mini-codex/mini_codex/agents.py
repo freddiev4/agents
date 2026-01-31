@@ -6,7 +6,7 @@ Each agent is a configuration object — not a class — that specifies:
   - A mode: "primary" (user-facing) or "subagent" (spawned by other agents)
   - A system prompt
   - A permission set controlling which tools it can use
-  - Model parameters (temperature, max_tokens)
+  - Model parameters (temperature, max_completion_tokens)
 
 Built-in agents:
   - build:  Primary agent with full read/write/execute access
@@ -16,13 +16,13 @@ Built-in agents:
 from dataclasses import dataclass, field
 from typing import Any
 
-from .permissions import (
+from mini_codex.permissions import (
     PermissionSet,
     build_permissions,
     plan_permissions,
     subagent_permissions,
 )
-from .tools import TOOL_DEFINITIONS
+from mini_codex.tools import TOOL_DEFINITIONS
 
 
 @dataclass
@@ -37,7 +37,7 @@ class AgentDefinition:
     system_prompt: str = ""
     permission_set: PermissionSet = field(default_factory=lambda: build_permissions())
     temperature: float = 0.0
-    max_tokens: int = 4096
+    max_completion_tokens: int = 4096
     max_turns: int = 50
 
 
@@ -129,7 +129,7 @@ AGENT_REGISTRY: dict[str, AgentDefinition] = {
         system_prompt=BUILD_SYSTEM_PROMPT,
         permission_set=build_permissions(),
         temperature=0.0,
-        max_tokens=4096,
+        max_completion_tokens=4096,
         max_turns=50,
     ),
     "plan": AgentDefinition(
@@ -139,7 +139,7 @@ AGENT_REGISTRY: dict[str, AgentDefinition] = {
         system_prompt=PLAN_SYSTEM_PROMPT,
         permission_set=plan_permissions(),
         temperature=0.0,
-        max_tokens=4096,
+        max_completion_tokens=4096,
         max_turns=30,
     ),
     "subagent": AgentDefinition(
@@ -149,7 +149,7 @@ AGENT_REGISTRY: dict[str, AgentDefinition] = {
         system_prompt=SUBAGENT_SYSTEM_PROMPT,
         permission_set=subagent_permissions(),
         temperature=0.0,
-        max_tokens=4096,
+        max_completion_tokens=4096,
         max_turns=30,
     ),
 }

@@ -4,8 +4,8 @@ import argparse
 import os
 import sys
 
-from .agent import Agent, AgentConfig
-from .agents import list_agents
+from mini_codex.agent import Agent, AgentConfig
+from mini_codex.agents import list_agents
 
 
 def print_colored(text: str, color: str) -> None:
@@ -153,7 +153,7 @@ Examples:
     parser.add_argument("-d", "--directory", default=os.getcwd(),
                         help="Working directory (default: current)")
     parser.add_argument("-p", "--prompt", help="Single prompt (non-interactive)")
-    parser.add_argument("--model", default="gpt-4o", help="OpenAI model (default: gpt-4o)")
+    parser.add_argument("--model", default="gpt-5.2-2025-12-11", help="OpenAI model (default: gpt-4o)")
     parser.add_argument("--agent", default="build", choices=["build", "plan"],
                         help="Agent type (default: build)")
     parser.add_argument("--mcp-config", default=None,

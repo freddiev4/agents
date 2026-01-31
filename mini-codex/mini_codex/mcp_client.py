@@ -32,7 +32,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from .tools import ToolResult
+from mini_codex.tools import ToolResult
 
 
 # ---------------------------------------------------------------------------

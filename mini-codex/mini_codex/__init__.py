@@ -1,10 +1,10 @@
 """Mini Codex - A coding agent harness inspired by OpenCode."""
 
-from .agent import Agent, AgentConfig
-from .agents import AgentDefinition, get_agent_definition, list_agents
-from .mcp_client import MCPManager
-from .permissions import PermissionSet, PermissionLevel
-from .session import Session
+from mini_codex.agent import Agent, AgentConfig
+from mini_codex.agents import AgentDefinition, get_agent_definition, list_agents
+from mini_codex.mcp_client import MCPManager
+from mini_codex.permissions import PermissionSet, PermissionLevel
+from mini_codex.session import Session
 
 __version__ = "0.2.0"
 __all__ = [
