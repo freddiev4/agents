@@ -312,6 +312,7 @@ class Agent:
         new_def = get_agent_definition(agent_name)
         self.agent_def = new_def
         self.config.agent_name = agent_name
+
         # Update the system message
         if self.session.messages and self.session.messages[0].role == "system":
             self.session.messages[0].content = self._build_system_prompt()
