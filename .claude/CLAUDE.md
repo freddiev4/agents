@@ -38,6 +38,4 @@ If the `gh` cli exists, then make a pull request with your changes.
 When working on independent tasks, try and use subagents to work on them rather than working on it all within the main chat context.
 
 ## Tracking Work
-When starting any new piece of work, always make a `<YYYYMMDD>-TODO-<short-descriptor>.md` file corresponding to that work, and keep it updated while doing it.
-
-When finished with your work, put it in a new directory called `todos`, so you can keep track of historical work.
+When starting any new piece of work, always make a `docs/[feature]/` folder. The folder should contain a `plan.md` file to track the planning, a `todo.md` for managing todos, and a `docs.md` for documentation about the feature such as setup, how it works, and references.
