@@ -101,7 +101,62 @@ class Session:
 
     def get_api_messages(self) -> list[dict[str, Any]]:
         """Get messages in OpenAI API format."""
-        return [msg.to_api_format() for msg in self.messages]
+        msgs = [msg.to_api_format() for msg in self.messages]
+        return self._ensure_tool_call_responses(msgs)
+
+    @staticmethod
+    def _ensure_tool_call_responses(msgs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Repair message list to satisfy tool-call protocol.
+
+        OpenAI requires that any assistant message containing `tool_calls` is
+        followed by one `tool` message per `tool_call_id`.
+
+        If the app is interrupted after persisting the assistant tool_calls but
+        before persisting tool results, the next API call will fail with a 400.
+        This function inserts placeholder tool responses for any missing ids.
+        """
+
+        repaired: list[dict[str, Any]] = []
+        i = 0
+        while i < len(msgs):
+            m = msgs[i]
+            repaired.append(m)
+
+            if m.get("role") == "assistant" and m.get("tool_calls"):
+                tool_calls = m.get("tool_calls") or []
+                expected_ids: list[str] = []
+                for tc in tool_calls:
+                    if isinstance(tc, dict) and tc.get("id"):
+                        expected_ids.append(tc["id"])
+
+                # Copy any existing tool messages immediately following.
+                j = i + 1
+                seen_ids: set[str] = set()
+                while j < len(msgs) and msgs[j].get("role") == "tool":
+                    tcid = msgs[j].get("tool_call_id")
+                    if tcid:
+                        seen_ids.add(tcid)
+                    repaired.append(msgs[j])
+                    j += 1
+
+                # Insert placeholders for missing tool_call_ids.
+                for tid in expected_ids:
+                    if tid not in seen_ids:
+                        repaired.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tid,
+                                "name": "unknown",
+                                "content": "(Tool result missing: previous run was interrupted. Please retry.)",
+                            }
+                        )
+
+                i = j
+                continue
+
+            i += 1
+
+        return repaired
 
     def get_context_summary(self) -> str:
         """Get a summary of the current context for display."""
