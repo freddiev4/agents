@@ -1,0 +1,227 @@
+"""Persistent prompt_toolkit TUI for Rune.
+
+This provides a two-pane interface:
+- Scrollable output log (top)
+- Fixed multiline input box (bottom)
+
+It is optional and enabled via a CLI flag.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from dataclasses import dataclass
+from typing import Optional
+
+from prompt_toolkit.application import Application
+from prompt_toolkit.application.current import get_app
+from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.filters import Condition
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.layout import HSplit, Layout, Window
+from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
+from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.layout.margins import Margin
+from prompt_toolkit.styles import Style
+from prompt_toolkit.widgets import Frame, TextArea
+
+
+class _PromptGlyphMargin(Margin):
+    """Left margin that shows a prompt glyph only on the first visible line."""
+
+    def __init__(self, prompt: str = "❯ ") -> None:
+        self.prompt = prompt
+
+    def get_width(self, get_ui_content) -> int:  # type: ignore[override]
+        return len(self.prompt)
+
+    def create_margin(self, window_render_info, width: int, height: int):  # type: ignore[override]
+        # Return a flat list of fragments; newlines split into margin lines.
+        # Only show the prompt on the first line; indent subsequent wrapped lines.
+        fragments = [("class:prompt", self.prompt + "\n")]
+        pad = " " * len(self.prompt)
+        fragments.extend([("class:prompt", pad + "\n") for _ in range(max(0, height - 1))])
+        return fragments
+
+
+@dataclass
+class TuiPrinter:
+    """A minimal 'printer' that appends text into a TextArea."""
+
+    output: TextArea
+    app: Application
+
+    def print(self, text: str = "") -> None:
+        # Append and keep the view scrolled to bottom.
+        buf = self.output.buffer
+        buf.insert_text(text + "\n", move_cursor=True)
+        self.output.buffer.cursor_position = len(self.output.text)
+        self.app.invalidate()
+
+
+def run_tui(agent) -> None:
+    """Run Rune in a persistent TUI.
+
+    The `agent` is expected to be rune.harness.agent.Agent.
+    """
+
+    style = Style.from_dict(
+        {
+            "frame.border": "#b0b0b0",
+            "title": "bold #b0b0b0",
+            "prompt": "#b0b0b0",
+            "status": "#b0b0b0",
+        }
+    )
+
+    kb = KeyBindings()
+
+    # NOTE: Some prompt_toolkit versions raise `prompt_toolkit.buffer.EditReadOnlyBuffer`
+    # when trying to programmatically insert into a read_only TextArea.
+    # We keep the output area non-focusable instead of read_only, and we never
+    # focus it, so the user can't edit it.
+    output = TextArea(
+        text="",
+        read_only=False,
+        scrollbar=True,
+        focusable=False,
+        wrap_lines=True,
+    )
+
+    # Multiline input buffer.
+    # Disable completer to avoid coroutine warnings in some prompt_toolkit versions.
+    input_buffer = Buffer(multiline=True, completer=None)
+
+    prompt_char = {"build": "#", "plan": "?"}.get(agent.agent_def.name, ">")
+    prompt_title = f"{agent.agent_def.name} {prompt_char}"
+
+    input_control = BufferControl(buffer=input_buffer)
+    input_window = Window(
+        content=input_control,
+        height=1,
+        wrap_lines=False,
+        left_margins=[_PromptGlyphMargin("❯ ")],
+    )
+
+    header = FormattedTextControl(
+        text=[
+            ("class:title", "Rune"),
+            ("", "  "),
+            ("class:status", f"Agent: {agent.agent_def.name}  Model: {agent.config.model}"),
+        ]
+    )
+
+    root = HSplit(
+        [
+            Window(header, height=1),
+            output,
+            Window(FormattedTextControl([("class:prompt", prompt_title)]), height=1),
+            input_window,
+        ]
+    )
+
+    layout = Layout(root, focused_element=input_window)
+
+    app: Application
+
+    printer_holder: dict[str, Optional[TuiPrinter]] = {"p": None}
+
+    def _append_agent_turn(turn) -> None:
+        p = printer_holder["p"]
+        if p is None:
+            return
+
+        for i, tool_call in enumerate(turn.tool_calls):
+            try:
+                args = json.loads(tool_call["function"]["arguments"])
+            except Exception:
+                args = {"arguments": tool_call["function"].get("arguments")}
+            p.print(f"[{turn.agent_name}] Tool: {tool_call['function']['name']}")
+            for k, v in (args or {}).items():
+                p.print(f"  {k}: {v}")
+            if i < len(turn.tool_results):
+                tr = turn.tool_results[i]
+                if tr.success:
+                    p.print(f"  ✓ {tool_call['function']['name']} completed")
+                    if tr.output:
+                        p.print(str(tr.output))
+                else:
+                    p.print(f"  ✗ {tool_call['function']['name']} failed: {tr.error}")
+
+        if turn.finished and turn.response:
+            p.print(str(turn.response))
+
+    def _submit() -> None:
+        text = input_buffer.text.strip()
+        if not text:
+            return
+
+        # Echo user input into output pane.
+        p = printer_holder["p"]
+        if p is not None:
+            p.print(f"You: {text}")
+            # Ensure exactly one blank line between the user message and the
+            # agent/tool output that follows.
+            p.print("")
+
+        input_buffer.text = ""
+
+        try:
+            for turn in agent.stream(text):
+                _append_agent_turn(turn)
+        except Exception as e:
+            if p is not None:
+                p.print(f"Error: {e}")
+
+    @kb.add("enter", filter=Condition(lambda: True))
+    def _(event) -> None:
+        # Enter submits when cursor is on last line and not preceded by a backslash.
+        # Otherwise insert newline.
+        buf = event.app.current_buffer
+        doc = buf.document
+        if doc.is_cursor_at_the_end:
+            _submit()
+        else:
+            buf.insert_text("\n")
+
+    @kb.add("s-tab")
+    def _(event) -> None:
+        # Shift+Tab inserts newline (always).
+        event.app.current_buffer.insert_text("\n")
+
+    @kb.add("c-c")
+    @kb.add("c-d")
+    def _(event) -> None:
+        event.app.exit(result=None)
+
+    app = Application(layout=layout, key_bindings=kb, style=style, full_screen=False)
+    printer_holder["p"] = TuiPrinter(output=output, app=app)
+
+    # Initial header/help. (Defer until the app is running; Buffer.insert_text
+    # calls get_app() internally and requires an active prompt_toolkit app.)
+    initial_help = "Commands: exit, reset, history, switch <agent>, agents, status"
+
+    async def _run() -> None:
+        """Run the prompt_toolkit app.
+
+        On some Python/prompt_toolkit combinations (notably Python 3.13), PTK can
+        surface `RuntimeError: no running event loop` from internal callbacks.
+        Running the app in a dedicated task keeps the loop active for the full
+        lifetime of the UI.
+        """
+
+        app_task = asyncio.create_task(app.run_async())
+        # Now that the app is running, it's safe to write into buffers.
+        printer_holder["p"].print(initial_help)
+        try:
+            await app_task
+        finally:
+            if not app_task.done():
+                app.exit(result=None)
+                await app_task
+
+    try:
+        asyncio.run(_run())
+    finally:
+        agent.shutdown()
