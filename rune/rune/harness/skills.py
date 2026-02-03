@@ -1,23 +1,14 @@
-"""Skills harness.
+"""Skills system for Rune.
 
-Implements a Codex-like "skills" mechanism for Rune.
+Implements a Codex-inspired skills mechanism where skills are markdown files
+with YAML frontmatter that provide specialized instructions to the agent.
 
-A *skill* is a local instruction bundle stored in a `SKILL.md` file.
+Skills follow a progressive disclosure approach:
+1. Skills list always shown in system prompt (metadata only)
+2. Full SKILL.md content loaded when explicitly mentioned
+3. Referenced files loaded on-demand
 
-This harness provides two integrations:
-
-1) System prompt augmentation: render a "Skills" section listing available skills
-   and how to use them.
-2) Per-turn injection: when the user explicitly mentions a skill (e.g. `$my-skill`
-   or `[$my-skill](path/to/SKILL.md)`), inject the full SKILL.md contents into the
-   prompt for that turn.
-
-Design goals:
-- Keep this logic isolated to the harness layer.
-- Do not persist injected skill bodies across turns.
-- Be conservative: only inject on explicit mention (for now).
-
-This is inspired by openai/codex codex-rs implementation.
+Inspired by openai/codex codex-rs implementation.
 """
 
 from __future__ import annotations
@@ -26,250 +17,429 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterator
 
-from rune.harness.session import Message, Session
+import yaml
 
 
 SKILL_FILENAME = "SKILL.md"
+MAX_SCAN_DEPTH = 6
 
 
 @dataclass(frozen=True)
 class Skill:
+    """A skill with its metadata and location."""
+
     name: str
     description: str
     path: Path
-
-
-class SkillsHarness:
-    def __init__(self, working_dir: str, *, max_scan_depth: int = 6):
-        self.working_dir = Path(working_dir)
-        self.max_scan_depth = max_scan_depth
-        self._skills_cache: list[Skill] | None = None
-
-    # ---------------------------------------------------------------------
-    # Discovery
-    # ---------------------------------------------------------------------
-
-    def _skill_roots(self) -> list[Path]:
-        """Return directories to scan for skills.
-
-        Current roots (simple, repo-local):
-        - <cwd>/.agents/skills
-        - <cwd>/.codex/skills
-        - <cwd>/skills
-
-        This can be extended later to include user/global roots.
-        """
-
-        cwd = self.working_dir
-        return [cwd / ".agents" / "skills", cwd / ".codex" / "skills", cwd / "skills"]
-
-    def _discover_skills(self) -> list[Skill]:
-        skills: list[Skill] = []
-        seen_paths: set[Path] = set()
-
-        for root in self._skill_roots():
-            if not root.exists() or not root.is_dir():
-                continue
-
-            for skill_path in self._walk_for_skill_files(root):
-                try:
-                    skill = self._parse_skill_file(skill_path)
-                except Exception:
-                    continue
-
-                if skill.path in seen_paths:
-                    continue
-                seen_paths.add(skill.path)
-                skills.append(skill)
-
-        # stable ordering
-        skills.sort(key=lambda s: (s.name.lower(), str(s.path)))
-        return skills
-
-    def _walk_for_skill_files(self, root: Path) -> Iterable[Path]:
-        root = root.resolve()
-        for dirpath, dirnames, filenames in os.walk(root):
-            # prune hidden dirs
-            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
-
-            current = Path(dirpath)
-            try:
-                rel = current.relative_to(root)
-                depth = len(rel.parts)
-            except Exception:
-                depth = 0
-            if depth > self.max_scan_depth:
-                dirnames[:] = []
-                continue
-
-            if SKILL_FILENAME in filenames:
-                yield (current / SKILL_FILENAME).resolve()
-
-    def _parse_skill_file(self, path: Path) -> Skill:
-        text = path.read_text(encoding="utf-8")
-        fm = _extract_frontmatter(text)
-        if fm is None:
-            raise ValueError("missing frontmatter")
-        data = yaml.safe_load(fm) or {}
-        name = str(data.get("name", "")).strip()
-        description = str(data.get("description", "")).strip()
-        if not name or not description:
-            raise ValueError("missing name/description")
-        return Skill(name=name, description=description, path=path)
-
-    def skills(self, *, force_reload: bool = False) -> list[Skill]:
-        if force_reload or self._skills_cache is None:
-            self._skills_cache = self._discover_skills()
-        return list(self._skills_cache)
-
-    # ---------------------------------------------------------------------
-    # Prompt rendering
-    # ---------------------------------------------------------------------
-
-    def render_skills_section(self) -> str | None:
-        skills = self.skills()
-        if not skills:
-            return None
-
-        lines: list[str] = []
-        lines.append("## Skills")
-        lines.append(
-            "A skill is a set of local instructions to follow that is stored in a `SKILL.md` file. "
-            "Below is the list of skills that can be used. Each entry includes a name, description, "
-            "and file path so you can open the source for full instructions when using a specific skill."
-        )
-        lines.append("### Available skills")
-        for s in skills:
-            lines.append(f"- {s.name}: {s.description} (file: {s.path.as_posix()})")
-
-        lines.append("### How to use skills")
-        lines.append(
-            "- Trigger rules: If the user names a skill (with `$SkillName` or plain text) OR the task clearly "
-            "matches a skill's description shown above, you must use that skill for that turn. Multiple mentions "
-            "mean use them all. Do not carry skills across turns unless re-mentioned.\n"
-            "- How to use a skill (progressive disclosure):\n"
-            "  1) After deciding to use a skill, open its `SKILL.md`. Read only enough to follow the workflow.\n"
-            "  2) When `SKILL.md` references relative paths, resolve them relative to the skill directory first.\n"
-            "  3) Load only the specific files needed; don't bulk-load everything.\n"
-            "  4) Prefer running or patching referenced scripts instead of retyping large code blocks.\n"
-            "- Safety and fallback: If a skill can't be applied cleanly (missing files, unclear instructions), "
-            "state the issue, pick the next-best approach, and continue."
-        )
-
-        return "\n".join(lines)
-
-    # ---------------------------------------------------------------------
-    # Per-turn injection
-    # ---------------------------------------------------------------------
-
-    def apply_turn_injections(self, session: Session) -> None:
-        """Inject mentioned skill bodies into the session for the next model call.
-
-        This mutates `session.messages` by inserting temporary system messages.
-        Any previously injected skill messages are removed first.
-        """
-
-        # Remove previous injections
-        session.messages = [
-            m
-            for m in session.messages
-            if not (m.role == "system" and (m.content or "").startswith("[SKILL:"))
-        ]
-
-        last_user = next((m for m in reversed(session.messages) if m.role == "user"), None)
-        if not last_user or not last_user.content:
-            return
-
-        mentioned = self._collect_explicit_mentions(last_user.content)
-        if not mentioned:
-            return
-
-        skills = self.skills()
-        by_name = {s.name: s for s in skills}
-        selected: list[Skill] = []
-
-        for name in mentioned.names:
-            if name in by_name:
-                selected.append(by_name[name])
-
-        for p in mentioned.paths:
-            sp = Path(p)
-            if not sp.is_absolute():
-                sp = (self.working_dir / sp).resolve()
-            if sp.name.lower() != SKILL_FILENAME.lower():
-                continue
-            for s in skills:
-                if s.path == sp:
-                    selected.append(s)
-                    break
-
-        # dedupe by path
-        seen: set[Path] = set()
-        selected = [s for s in selected if not (s.path in seen or seen.add(s.path))]
-        if not selected:
-            return
-
-        # Insert after the first system message (if present), else at start.
-        insert_at = 1 if session.messages and session.messages[0].role == "system" else 0
-        injections: list[Message] = []
-        for s in selected:
-            try:
-                contents = s.path.read_text(encoding="utf-8")
-            except Exception:
-                continue
-            injections.append(
-                Message(
-                    role="system",
-                    content=f"[SKILL:{s.name} @ {s.path.as_posix()}]\n{contents}\n[END SKILL]",
-                )
-            )
-
-        if injections:
-            session.messages[insert_at:insert_at] = injections
-
-    def _collect_explicit_mentions(self, text: str) -> "ToolMentions":
-        return extract_tool_mentions(text)
+    short_description: str | None = None
 
 
 @dataclass(frozen=True)
-class ToolMentions:
-    names: set[str]
-    paths: set[str]
+class SkillMention:
+    """Represents explicit skill mentions in user input."""
+
+    names: set[str]  # Plain mentions like $skill-name
+    paths: set[str]  # Path mentions like [$skill](path/to/SKILL.md)
 
 
-_LINKED = re.compile(r"\[\$(?P<name>[A-Za-z0-9_-]+)\]\((?P<path>[^)]+)\)")
-_PLAIN = re.compile(r"\$(?P<name>[A-Za-z0-9_-]+)")
+class SkillsManager:
+    """Manages skill discovery, loading, and injection."""
 
+    def __init__(self, working_dir: str | Path):
+        self.working_dir = Path(working_dir).resolve()
+        self._cache: list[Skill] | None = None
 
-def extract_tool_mentions(text: str) -> ToolMentions:
-    names: set[str] = set()
-    paths: set[str] = set()
+    # -------------------------------------------------------------------------
+    # Discovery
+    # -------------------------------------------------------------------------
 
-    for m in _LINKED.finditer(text):
-        name = m.group("name")
-        path = m.group("path").strip()
-        if name:
-            names.add(name)
-        if path:
-            paths.add(path)
+    def discover_skills(self, force_reload: bool = False) -> list[Skill]:
+        """Discover all available skills from configured roots.
 
-    for m in _PLAIN.finditer(text):
-        name = m.group("name")
-        if name:
-            names.add(name)
+        Args:
+            force_reload: If True, bypass cache and rediscover
 
-    return ToolMentions(names=names, paths=paths)
+        Returns:
+            List of discovered skills, sorted by name
+        """
+        if not force_reload and self._cache is not None:
+            return list(self._cache)  # Return a copy
 
+        skills: list[Skill] = []
+        seen_paths: set[Path] = set()
 
-def _extract_frontmatter(contents: str) -> str | None:
-    lines = contents.splitlines()
-    if not lines or lines[0].strip() != "---":
+        for root in self._get_skill_roots():
+            if not root.exists() or not root.is_dir():
+                continue
+
+            for skill_path in self._scan_for_skills(root):
+                # Skip if already seen (deduplication)
+                if skill_path in seen_paths:
+                    continue
+
+                try:
+                    skill = self._parse_skill(skill_path)
+                    skills.append(skill)
+                    seen_paths.add(skill_path)
+                except Exception:
+                    # Skip invalid skills
+                    continue
+
+        # Sort by name for stable ordering
+        skills.sort(key=lambda s: (s.name.lower(), str(s.path)))
+
+        self._cache = skills
+        return list(skills)  # Return a copy
+
+    def _get_skill_roots(self) -> list[Path]:
+        """Get directories to scan for skills.
+
+        Scans in order of precedence:
+        1. <cwd>/.agents/skills (repo scope)
+        2. <cwd>/.codex/skills (codex compat)
+        3. <cwd>/skills (simple)
+        4. ~/.agents/skills (user scope)
+        5. $CODEX_HOME/skills (user scope, codex compat)
+
+        Returns:
+            List of paths to scan
+        """
+        roots = [
+            self.working_dir / ".agents" / "skills",
+            self.working_dir / ".codex" / "skills",
+            self.working_dir / "skills",
+        ]
+
+        # User-level roots
+        home = Path.home()
+        roots.append(home / ".agents" / "skills")
+
+        codex_home = os.getenv("CODEX_HOME")
+        if codex_home:
+            roots.append(Path(codex_home) / "skills")
+
+        return roots
+
+    def _scan_for_skills(self, root: Path) -> Iterator[Path]:
+        """Recursively scan directory for SKILL.md files.
+
+        Args:
+            root: Directory to scan
+
+        Yields:
+            Paths to SKILL.md files
+        """
+        root = root.resolve()
+
+        for dirpath, dirnames, filenames in os.walk(root):
+            # Skip hidden directories
+            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+
+            # Check depth limit
+            current = Path(dirpath)
+            try:
+                relative = current.relative_to(root)
+                depth = len(relative.parts)
+            except ValueError:
+                depth = 0
+
+            if depth > MAX_SCAN_DEPTH:
+                dirnames[:] = []  # Don't recurse deeper
+                continue
+
+            # Yield SKILL.md if found
+            if SKILL_FILENAME in filenames:
+                yield (current / SKILL_FILENAME).resolve()
+
+    def _parse_skill(self, path: Path) -> Skill:
+        """Parse a SKILL.md file.
+
+        Args:
+            path: Path to SKILL.md
+
+        Returns:
+            Parsed Skill object
+
+        Raises:
+            ValueError: If skill is malformed
+        """
+        content = path.read_text(encoding="utf-8")
+
+        # Extract frontmatter
+        frontmatter = self._extract_frontmatter(content)
+        if not frontmatter:
+            raise ValueError(f"No frontmatter in {path}")
+
+        # Parse YAML
+        try:
+            data = yaml.safe_load(frontmatter) or {}
+        except yaml.YAMLError as e:
+            raise ValueError(f"Invalid YAML in {path}: {e}")
+
+        # Extract required fields
+        name = str(data.get("name", "")).strip()
+        description = str(data.get("description", "")).strip()
+
+        if not name:
+            raise ValueError(f"Missing 'name' in {path}")
+        if not description:
+            raise ValueError(f"Missing 'description' in {path}")
+
+        # Validate constraints
+        if len(name) > 64:
+            raise ValueError(f"Name too long in {path}: {len(name)} > 64")
+        if len(description) > 1024:
+            raise ValueError(f"Description too long in {path}: {len(description)} > 1024")
+
+        # Extract optional fields
+        short_description = data.get("short_description")
+        if short_description:
+            short_description = str(short_description).strip()
+
+        return Skill(
+            name=name,
+            description=description,
+            path=path,
+            short_description=short_description,
+        )
+
+    def _extract_frontmatter(self, content: str) -> str | None:
+        """Extract YAML frontmatter from markdown content.
+
+        Frontmatter format:
+            ---
+            name: skill-name
+            description: skill description
+            ---
+
+            # Rest of markdown content
+
+        Args:
+            content: Full file content
+
+        Returns:
+            Frontmatter string or None if not found
+        """
+        lines = content.splitlines()
+
+        if not lines or lines[0].strip() != "---":
+            return None
+
+        frontmatter_lines: list[str] = []
+        for line in lines[1:]:
+            if line.strip() == "---":
+                # Found closing delimiter
+                result = "\n".join(frontmatter_lines).strip()
+                return result if result else None
+            frontmatter_lines.append(line)
+
+        # No closing delimiter found
         return None
-    out: list[str] = []
-    for line in lines[1:]:
-        if line.strip() == "---":
-            return "\n".join(out).strip() or None
-        out.append(line)
-    return None
+
+    # -------------------------------------------------------------------------
+    # Prompt rendering
+    # -------------------------------------------------------------------------
+
+    def render_skills_section(self) -> str | None:
+        """Render skills section for system prompt.
+
+        This shows available skills with their metadata, plus usage instructions.
+        The full SKILL.md content is loaded separately when mentioned.
+
+        Returns:
+            Formatted markdown section or None if no skills
+        """
+        skills = self.discover_skills()
+        if not skills:
+            return None
+
+        lines = [
+            "## Skills",
+            "",
+            "Skills are local instruction bundles stored in `SKILL.md` files. "
+            "Each skill provides specialized knowledge, workflows, or procedures for specific tasks.",
+            "",
+            "### Available Skills",
+            "",
+        ]
+
+        for skill in skills:
+            desc = skill.short_description or skill.description
+            lines.append(f"- **{skill.name}**: {desc}")
+            lines.append(f"  - Path: `{skill.path.as_posix()}`")
+
+        lines.extend([
+            "",
+            "### How to Use Skills",
+            "",
+            "**Activation**: Skills are activated when:",
+            "- User explicitly mentions a skill: `$skill-name` or `[$skill-name](path)`",
+            "- Task clearly matches a skill's description",
+            "",
+            "**Progressive Disclosure**:",
+            "1. When a skill is activated, read its SKILL.md file",
+            "2. Follow the instructions and workflow in the skill",
+            "3. Load referenced files (scripts, docs) only as needed",
+            "4. Prefer running existing scripts over rewriting code",
+            "",
+            "**Best Practices**:",
+            "- Only load what you need - respect the context budget",
+            "- Skills are per-turn - don't persist across messages unless re-mentioned",
+            "- If a skill can't be applied (missing files, unclear), explain and adapt",
+            "",
+        ])
+
+        return "\n".join(lines)
+
+    # -------------------------------------------------------------------------
+    # Mention detection and injection
+    # -------------------------------------------------------------------------
+
+    def extract_mentions(self, text: str) -> SkillMention:
+        """Extract explicit skill mentions from user text.
+
+        Supports two formats:
+        - Plain: $skill-name
+        - Linked: [$skill-name](path/to/SKILL.md)
+
+        Args:
+            text: User message text
+
+        Returns:
+            SkillMention with names and paths
+        """
+        names: set[str] = set()
+        paths: set[str] = set()
+
+        # Pattern for linked mentions: [$name](path)
+        linked_pattern = re.compile(r'\[\$(?P<name>[A-Za-z0-9_-]+)\]\((?P<path>[^)]+)\)')
+        for match in linked_pattern.finditer(text):
+            name = match.group("name")
+            path = match.group("path").strip()
+            if name:
+                names.add(name)
+            if path:
+                paths.add(path)
+
+        # Pattern for plain mentions: $name
+        plain_pattern = re.compile(r'\$(?P<name>[A-Za-z0-9_-]+)')
+        for match in plain_pattern.finditer(text):
+            name = match.group("name")
+            if name:
+                names.add(name)
+
+        return SkillMention(names=names, paths=paths)
+
+    def get_skills_for_mentions(self, mention: SkillMention) -> list[Skill]:
+        """Resolve skill mentions to actual skills.
+
+        Args:
+            mention: Extracted mentions from user input
+
+        Returns:
+            List of resolved skills (deduplicated)
+        """
+        skills = self.discover_skills()
+        by_name = {s.name: s for s in skills}
+
+        selected: list[Skill] = []
+        seen_paths: set[Path] = set()
+
+        # Resolve by name
+        for name in mention.names:
+            if name in by_name:
+                skill = by_name[name]
+                if skill.path not in seen_paths:
+                    selected.append(skill)
+                    seen_paths.add(skill.path)
+
+        # Resolve by path
+        for path_str in mention.paths:
+            path = Path(path_str)
+            if not path.is_absolute():
+                path = (self.working_dir / path).resolve()
+
+            # Must be a SKILL.md file
+            if path.name.lower() != SKILL_FILENAME.lower():
+                continue
+
+            # Find matching skill
+            for skill in skills:
+                if skill.path == path and skill.path not in seen_paths:
+                    selected.append(skill)
+                    seen_paths.add(skill.path)
+                    break
+
+        return selected
+
+    def load_skill_content(self, skill: Skill) -> str | None:
+        """Load full content of a skill file.
+
+        Args:
+            skill: Skill to load
+
+        Returns:
+            Full SKILL.md content or None on error
+        """
+        try:
+            return skill.path.read_text(encoding="utf-8")
+        except Exception:
+            return None
+
+    def apply_turn_injections(self, session: Any) -> None:
+        """Inject mentioned skill content into the session for the current turn.
+
+        This inspects the last user message for skill mentions and injects
+        the full SKILL.md content as system messages.
+
+        Args:
+            session: Session object with messages attribute
+        """
+        # Import here to avoid circular dependency
+        from rune.harness.session import Message
+
+        # Remove previous skill injections
+        session.messages = [
+            m for m in session.messages
+            if not (m.role == "system" and (m.content or "").startswith("[SKILL:"))
+        ]
+
+        # Find last user message
+        last_user_msg = None
+        for msg in reversed(session.messages):
+            if msg.role == "user":
+                last_user_msg = msg
+                break
+
+        if not last_user_msg or not last_user_msg.content:
+            return
+
+        # Extract mentions from user message
+        mention = self.extract_mentions(last_user_msg.content)
+        skills = self.get_skills_for_mentions(mention)
+
+        if not skills:
+            return
+
+        # Load and inject skill content
+        injections: list[Message] = []
+        for skill in skills:
+            content = self.load_skill_content(skill)
+            if content:
+                injections.append(
+                    Message(
+                        role="system",
+                        content=f"[SKILL: {skill.name} @ {skill.path.as_posix()}]\n{content}\n[END SKILL]",
+                    )
+                )
+
+        # Insert after first system message (if present), else at start
+        if injections:
+            insert_at = 1 if session.messages and session.messages[0].role == "system" else 0
+            session.messages[insert_at:insert_at] = injections
+
+
+# Compatibility alias for existing code
+SkillsHarness = SkillsManager
