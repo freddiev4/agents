@@ -16,6 +16,7 @@ from rune.harness.mcp_client import MCPManager
 from rune.harness.permissions import PermissionLevel
 from rune.harness.session import Session
 from rune.harness.tools import TOOL_DEFINITIONS, ToolExecutor, ToolResult, TodoList
+from rune.harness.skills import SkillsManager
 
 
 @dataclass
@@ -85,6 +86,9 @@ class Agent:
         else:
             self._mcp_tools = []
 
+        # Initialize skills manager (prompt augmentation + per-turn injections)
+        self.skills = SkillsManager(working_dir=self.working_dir)
+
         # Initialize session
         self.session = Session(
             working_dir=self.working_dir,
@@ -98,7 +102,11 @@ class Agent:
         if self._mcp_tools:
             names = ", ".join(t.name for t in self._mcp_tools)
             mcp_info = f"\nAdditional MCP tools available: {names}\n"
-        return f"{self.agent_def.system_prompt}\n{context}{mcp_info}"
+
+        skills_section = self.skills.render_skills_section()
+        skills_info = f"\n{skills_section}\n" if skills_section else ""
+
+        return f"{self.agent_def.system_prompt}\n{context}{mcp_info}{skills_info}"
 
     def _get_permitted_tools(self) -> list[dict[str, Any]]:
         """Get tool definitions filtered by this agent's permissions."""
@@ -200,6 +208,9 @@ class Agent:
 
     def _call_model(self):
         """Call the OpenAI API with the current conversation."""
+        # Inject skill bodies for this turn based on the latest user message.
+        # This is done at call time so skills are not persisted across turns.
+        self.skills.apply_turn_injections(self.session)
         return self.client.chat.completions.create(
             model=self.config.model,
             messages=self.session.get_api_messages(),
