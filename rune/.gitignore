@@ -1,0 +1,20 @@
+# python-related files
+__pycache__/*
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+
+# venv
+venv/
+
+.DS_Store
+
+# cursor dirs
+.cursor/
+
+
+sessions/*
+
+*.egg-info/
