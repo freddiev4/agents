@@ -21,6 +21,7 @@ Provides 15 built-in tools for file operations, shell commands, and more:
 import fnmatch
 import json
 import os
+import pathlib
 import re
 import subprocess
 import tempfile
@@ -530,7 +531,6 @@ class ToolExecutor:
         return ToolResult(success=True, output="\n".join(entries))
 
     def _execute_glob(self, args: dict[str, Any]) -> ToolResult:
-        import pathlib
         pattern = args.get("pattern", "")
         base = args.get("path", ".")
         if not pattern:

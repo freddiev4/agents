@@ -28,6 +28,7 @@ import json
 import os
 import subprocess
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -117,7 +118,6 @@ class MCPServer:
             self.process.stdin.flush()
 
         # Poll for response
-        import time
         deadline = time.time() + timeout
         while time.time() < deadline:
             if req_id in self._response_buf:
